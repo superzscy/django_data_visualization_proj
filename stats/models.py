@@ -1,13 +1,5 @@
 from django.db import models
-
-
-def parse_file_size_int_to_str(num, suffix="B"):
-    for unit in ["", "K", "M"]:
-        if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
-        num /= 1024.0
-    return f"{num:.1f}Yi{suffix}"
-
+from .common.util.file import parse_file_size_int_to_str
 
 class DataFile(models.Model):
     full_name = models.CharField(max_length=256)
