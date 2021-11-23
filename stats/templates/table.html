@@ -1,0 +1,44 @@
+<!-- Write HTML code here -->
+<!DOCTYPE html>
+<html lang="en">
+
+{% load static %}
+
+<head>
+    <title>File List</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{% static 'stats/bootstrap.min.css' %}">
+    <script src="{% static 'stats/jquery.min.js' %}"></script>
+    <script src="{% static 'stats/popper.min.js' %}"></script>
+    <script src="{% static 'stats/bootstrap.min.js' %}"></script>
+</head>
+
+<body>
+
+    <div class="container">
+        <h2 class="text-center"><u>File List</u></h2><br>
+        <table class="table table-dark table-striped">
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- jinja2 Technique -->
+                {% if d %}
+                {% for i in d %}
+                <tr>
+                    <td>{{i.file_name}}</td>
+                    <td>{{i.size}}</td>
+                </tr>
+                {% endfor %}
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+</body>
+
+</html>

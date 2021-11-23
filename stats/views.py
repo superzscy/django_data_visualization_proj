@@ -1,5 +1,3 @@
-from pyecharts.charts import Bar
-from pyecharts import options as opts
 from jinja2 import Environment, FileSystemLoader
 from django.http import HttpResponse, HttpResponseRedirect
 from django import forms
@@ -7,6 +5,9 @@ from django.shortcuts import render
 from django.utils.dateparse import parse_datetime
 import os
 import time
+
+from pyecharts.charts import Tab, Bar
+from pyecharts import options as opts
 
 from .models import DataFile, DataFileRecord
 from .common.util.file import parse_file_size_str_to_int, parse_file_size_int_to_str
@@ -18,29 +19,51 @@ CurrentConfig.ONLINE_HOST = '/static/stats/'
 
 
 def index(request):
-    file_name = request.GET['file_name']
-    data_file = DataFile.objects.filter(file_name=file_name).first()
-    if not data_file:
-        return HttpResponse(f"Can not find {file_name}")
+    file_name_count = request.GET.get('count', '')
+    if file_name_count is not None and file_name_count.isnumeric():
+        file_name_count = int(file_name_count)
+    else:
+        file_name_count = 10
 
-    data_file_records = DataFileRecord.objects.filter(
-        data_file=data_file).order_by('date_time')
-    if len(data_file_records) == 0:
-        return HttpResponse(f"No data file record for {file_name}")
+    data_files = DataFile.objects.all()[:file_name_count]
+    datas = []
+    for obj in data_files:
+        datas.append({'file_name': obj.full_name, 'size': obj.current_size()})
+    datas = sorted(datas, key=lambda d: d['size'], reverse=True)
+    datas = [{'file_name': obj['file_name'], 'size': parse_file_size_int_to_str(obj['size'])} for obj in datas]
+    context = {'d': datas}
+    return render(request, 'table.html', context)
 
-    date_list = []
-    size_list = []
-    for r in data_file_records:
-        size_list.append(round(r.size / 1024 / 1024, 2))
-        date_list.append(r.date_time.date())
 
-    c = (
-        Bar()
-        .add_xaxis(date_list)
-        .add_yaxis(file_name, size_list)
-        .set_global_opts(title_opts=opts.TitleOpts(title="Size(MB)"))
-    )
-    return HttpResponse(c.render_embed())
+def file_size_info(request):
+    file_names = request.GET.getlist('file_name')
+
+    tab = Tab()
+
+    for file_name in file_names:
+        data_file = DataFile.objects.filter(file_name=file_name).first()
+        if not data_file:
+            return HttpResponse(f"Can not find {file_name}")
+
+        data_file_records = DataFileRecord.objects.filter(
+            data_file=data_file).order_by('date_time')
+        if len(data_file_records) == 0:
+            return HttpResponse(f"No data file record for {file_name}")
+
+        date_list = []
+        size_list = []
+        for r in data_file_records:
+            size_list.append(round(r.size / 1024 / 1024, 2))
+            date_list.append(r.date_time.date())
+
+        bar = (
+            Bar()
+            .add_xaxis(date_list)
+            .add_yaxis(file_name, size_list)
+            .set_global_opts(title_opts=opts.TitleOpts(title="Size(MB)"))
+        )
+        tab.add(bar, file_name)
+    return HttpResponse(tab.render_embed())
 
 
 class UploadFileForm(forms.Form):
