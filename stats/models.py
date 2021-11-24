@@ -21,3 +21,17 @@ class DataFileRecord(models.Model):
 
     def __str__(self):
         return str(self.data_file) + " " + str(parse_file_size_int_to_str(self.size)) + " " + str(self.date_time)
+
+class PerfRecord(models.Model):
+    phase_name = models.CharField(max_length=3)
+    sub_phase_name = models.CharField(max_length=32)
+    build_version = models.CharField(max_length=16)
+    perf_file_name = models.CharField(max_length=32)
+    desc = models.TextField(default='')
+
+class ScenePerf(models.Model):
+    phase_name = models.CharField(max_length=3)
+    sub_phase_name = models.CharField(max_length=32)
+    build_version = models.CharField(max_length=16)
+    desc = models.TextField(default='')
+

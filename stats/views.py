@@ -3,9 +3,12 @@ from django.http import HttpResponse
 from django import forms
 from django.shortcuts import render
 from django.utils.dateparse import parse_datetime
+from django.urls import get_resolver
+
 import os
 import time
 import sys
+from datetime import datetime
 
 from pyecharts.charts import Tab, Bar, Line, Page
 from pyecharts import options as opts
@@ -15,11 +18,48 @@ from .common.util.file import parse_file_size_str_to_int, parse_file_size_int_to
 
 from pyecharts.globals import CurrentConfig
 CurrentConfig.GLOBAL_ENV = Environment(
-    loader=FileSystemLoader("./stats/templates"))
+    loader=FileSystemLoader("stats/templates/stats/"))
 CurrentConfig.ONLINE_HOST = '/static/stats/'
 
 
-def index(request):
+def index(request):    
+    context = {'url_list': set(v[1].replace('stats/', '') for k,v in get_resolver(None).reverse_dict.items() if '$' not in v[1])}
+    return render(request, 'stats/index.html', context)
+
+
+def get_changed_data_files(datatime):
+    records = DataFileRecord.objects.filter(date_time__date=datatime.date())
+
+    ret = []
+    for r in records:
+        pre_day_rec = DataFileRecord.objects.filter(data_file=r.data_file, date_time__lt=r.date_time.date()).order_by('date_time').first()
+        if not pre_day_rec:
+            ret.append((r.data_file.full_name, r.size))
+        else:
+            ret.append((r.data_file.full_name, r.size - pre_day_rec.size))
+
+    return ret
+
+
+def data_file_changes(request):
+    date = request.GET.get('date', '')
+    if date == '':
+        date = datetime.today()
+    else:
+        try:
+            date = datetime.strptime(date + ' 23:59:59', "%Y-%m-%d %H:%M:%S")
+        except ValueError as e:
+            pass
+    if isinstance(date, datetime):
+        datas = get_changed_data_files(date)
+        datas = sorted(datas, key=lambda d: d[1], reverse=True)
+        datas = [{'file_name': k, 'size': parse_file_size_int_to_str(v)} for k,v in datas]
+        context = {'d': datas}
+        return render(request, 'stats/table.html', context)
+    else:
+        return HttpResponse('Wrong date parameter')
+
+def data_file_list(request):
     file_name_count = request.GET.get('count', '')
     if file_name_count is not None and file_name_count.isnumeric():
         file_name_count = int(file_name_count)
@@ -33,11 +73,13 @@ def index(request):
     datas = sorted(datas, key=lambda d: d['size'], reverse=True)
     datas = [{'file_name': obj['file_name'], 'size': parse_file_size_int_to_str(obj['size'])} for obj in datas][:file_name_count]
     context = {'d': datas}
-    return render(request, 'table.html', context)
+    return render(request, 'stats/table.html', context)
 
 
 def data_file_info(request):
     file_names = request.GET.getlist('file_name')
+    if not file_names:
+        return HttpResponse("file_name parameter missing")
 
     tab = Tab()
 
@@ -54,7 +96,7 @@ def data_file_info(request):
         date_list = []
         size_list = []
         for r in data_file_records:
-            size_list.append(round(r.size / 1024 / 1024, 2))
+            size_list.append(max(round(r.size / 1024 / 1024, 2), 0.01))
             date_list.append(r.date_time.date())
 
         bar = (
@@ -70,6 +112,9 @@ def data_file_info(request):
 def handle_uploaded_data_file(f, date_time_str):
     for chunk in f.chunks():
         for line in chunk.splitlines():
+            if line == '':
+                continue
+
             full_name, size_str = line.decode('utf-8').split(',', 2)
             full_name = full_name.replace('\\', '/').replace('//', '/')
             full_name = full_name.split('/ns/data/')[1]
@@ -109,12 +154,11 @@ def handle_uploaded_data_file(f, date_time_str):
                         create_data_file_record = True
                     elif next_day_rec and next_day_rec.size != new_record_size and (not pre_day_rec or pre_day_rec.size != new_record_size):
                         create_data_file_record = True
-                    elif pre_day_rec and pre_day_rec.size == new_record_size:
-                        pre_day_rec.date_time = new_record_datetime
-                        pre_day_rec.save()
-                    elif next_day_rec and next_day_rec.size == new_record_size:
+                    # same size record in a row, keep the first one
+                    if next_day_rec and next_day_rec.size == new_record_size:
                         next_day_rec.date_time = new_record_datetime
                         next_day_rec.save()
+
             if create_data_file_record:
                 data_file_record = DataFileRecord(size=new_record_size,
                                                   date_time=new_record_datetime,
@@ -135,9 +179,17 @@ def add_data_file_record(request):
             return HttpResponse(f'success, time elapsed:{time.time() - start}')
     else:
         form = UploadDataFileForm()
-    return render(request, 'upload.html', {'form': form, 'title': 'Add data file record'})
+    return render(request, 'stats/upload.html', {'form': form, 'title': 'Add data file record'})
 
 def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
+    lines = []
+
+    with open('./file/name.txt', 'wb+') as destination:
+        for chunk in f.chunks():
+            destination.write(chunk)
+            for line in chunk.splitlines():
+                lines.append(line.decode('utf-8'))
+
     print(version, phase_name, sub_phase_name)
 
     frames = []
@@ -145,11 +197,7 @@ def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
     gpu_times = []
     drawcall_cnts = []
 
-    lines = []
-    for chunk in f.chunks():
-        for line in chunk.splitlines():
-            # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
-            lines.append(line.decode('utf-8'))
+    # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
     for line in lines[1:]:
         attrs = line.split(',')
         frames.append(round(1000 / float(attrs[0]), 2))
@@ -161,7 +209,7 @@ def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
     opt_avg = opts.MarkPointOpts(data=[opts.MarkPointItem(type_="average")])
 
     perf_line = (
-        Line(init_opts=opts.InitOpts(width="1400px", height="690px"))
+        Line(init_opts=opts.InitOpts(width="1800px", height="900px"))
         .add_xaxis(list(range(1, len(frames))))
         .add_yaxis("frames", frames, markpoint_opts=opt_avg)
         .add_yaxis("cpu_times", cpu_times, markpoint_opts=opt_avg)
@@ -169,6 +217,7 @@ def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
         .add_yaxis("drawcall_cnts", drawcall_cnts, markpoint_opts=opt_avg)
         .set_global_opts(
             title_opts=opts.TitleOpts(title=f'{phase_name}:{sub_phase_name}'),
+            yaxis_opts=opts.AxisOpts(max_=100),
             datazoom_opts=[opts.DataZoomOpts(range_start=1, range_end=sys.maxsize)]
         )
     )
@@ -188,4 +237,4 @@ def add_fps_file_record(request):
             return handle_uploaded_fps_file(request.FILES['file'], request.POST['version'], request.POST['phase_name'], request.POST['sub_phase_name'])
     else:
         form = UploadFpsFileForm()
-    return render(request, 'upload.html', {'form': form, 'title': 'Add fps record'})
+    return render(request, 'stats/upload.html', {'form': form, 'title': 'Add fps record'})
