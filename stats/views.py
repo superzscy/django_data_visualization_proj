@@ -1,12 +1,13 @@
 from jinja2 import Environment, FileSystemLoader
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse
 from django import forms
 from django.shortcuts import render
 from django.utils.dateparse import parse_datetime
 import os
 import time
+import sys
 
-from pyecharts.charts import Tab, Bar
+from pyecharts.charts import Tab, Bar, Line, Page
 from pyecharts import options as opts
 
 from .models import DataFile, DataFileRecord
@@ -25,17 +26,17 @@ def index(request):
     else:
         file_name_count = 10
 
-    data_files = DataFile.objects.all()[:file_name_count]
+    data_files = DataFile.objects.all()
     datas = []
     for obj in data_files:
         datas.append({'file_name': obj.full_name, 'size': obj.current_size()})
     datas = sorted(datas, key=lambda d: d['size'], reverse=True)
-    datas = [{'file_name': obj['file_name'], 'size': parse_file_size_int_to_str(obj['size'])} for obj in datas]
+    datas = [{'file_name': obj['file_name'], 'size': parse_file_size_int_to_str(obj['size'])} for obj in datas][:file_name_count]
     context = {'d': datas}
     return render(request, 'table.html', context)
 
 
-def file_size_info(request):
+def data_file_info(request):
     file_names = request.GET.getlist('file_name')
 
     tab = Tab()
@@ -66,12 +67,7 @@ def file_size_info(request):
     return HttpResponse(tab.render_embed())
 
 
-class UploadFileForm(forms.Form):
-    date_time_str = forms.CharField(max_length=50)
-    file = forms.FileField()
-
-
-def handle_uploaded_file(f, date_time_str):
+def handle_uploaded_data_file(f, date_time_str):
     for chunk in f.chunks():
         for line in chunk.splitlines():
             full_name, size_str = line.decode('utf-8').split(',', 2)
@@ -126,14 +122,70 @@ def handle_uploaded_file(f, date_time_str):
                 data_file_record.save()
 
 
+class UploadDataFileForm(forms.Form):
+    date_time_str = forms.CharField(max_length=50)
+    file = forms.FileField()
+
 def add_data_file_record(request):
     if request.method == 'POST':
-        form = UploadFileForm(request.POST, request.FILES)
+        form = UploadDataFileForm(request.POST, request.FILES)
         if form.is_valid():
             start = time.time()
-            handle_uploaded_file(
-                request.FILES['file'], request.POST['date_time_str'])
-            return HttpResponse(f'success time elapsed:{time.time() - start}')
+            handle_uploaded_data_file(request.FILES['file'], request.POST['date_time_str'])
+            return HttpResponse(f'success, time elapsed:{time.time() - start}')
     else:
-        form = UploadFileForm()
-    return render(request, 'upload.html', {'form': form})
+        form = UploadDataFileForm()
+    return render(request, 'upload.html', {'form': form, 'title': 'Add data file record'})
+
+def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
+    print(version, phase_name, sub_phase_name)
+
+    frames = []
+    cpu_times = []
+    gpu_times = []
+    drawcall_cnts = []
+
+    lines = []
+    for chunk in f.chunks():
+        for line in chunk.splitlines():
+            # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
+            lines.append(line.decode('utf-8'))
+    for line in lines[1:]:
+        attrs = line.split(',')
+        frames.append(round(1000 / float(attrs[0]), 2))
+        cpu_times.append(round(float(attrs[1]), 2))
+        gpu_times.append(round(float(attrs[2]), 2))
+        drawcall_cnts.append(round(float(attrs[3]), 2))
+
+    page = Page()
+    opt_avg = opts.MarkPointOpts(data=[opts.MarkPointItem(type_="average")])
+
+    perf_line = (
+        Line(init_opts=opts.InitOpts(width="1400px", height="690px"))
+        .add_xaxis(list(range(1, len(frames))))
+        .add_yaxis("frames", frames, markpoint_opts=opt_avg)
+        .add_yaxis("cpu_times", cpu_times, markpoint_opts=opt_avg)
+        .add_yaxis("gpu_times", gpu_times, markpoint_opts=opt_avg)
+        .add_yaxis("drawcall_cnts", drawcall_cnts, markpoint_opts=opt_avg)
+        .set_global_opts(
+            title_opts=opts.TitleOpts(title=f'{phase_name}:{sub_phase_name}'),
+            datazoom_opts=[opts.DataZoomOpts(range_start=1, range_end=sys.maxsize)]
+        )
+    )
+    page.add(perf_line)
+    return HttpResponse(page.render_embed())
+
+class UploadFpsFileForm(forms.Form):
+    version = forms.CharField(max_length=50)
+    phase_name = forms.CharField(max_length=50)
+    sub_phase_name = forms.CharField(max_length=50)
+    file = forms.FileField()
+
+def add_fps_file_record(request):
+    if request.method == 'POST':
+        form = UploadFpsFileForm(request.POST, request.FILES)
+        if form.is_valid():
+            return handle_uploaded_fps_file(request.FILES['file'], request.POST['version'], request.POST['phase_name'], request.POST['sub_phase_name'])
+    else:
+        form = UploadFpsFileForm()
+    return render(request, 'upload.html', {'form': form, 'title': 'Add fps record'})

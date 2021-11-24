@@ -1,11 +1,18 @@
 <html>
-    <head></head>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <link rel="stylesheet" href="static/stats/bootstrap.min.css" integrity="sha384-/Y6pD6FV/Vv2HJnA6t+vslU6fwYXjCFtcEpHbNJ0lyAFsXTsjBbfaDjzALeQsN6M" crossorigin="anonymous">
+        <title>Uplopad</title>
+    </head>
     <body>
-        <h3>Read File Content</h3>
+        <h3>{{ title }}</h3>
         <form enctype="multipart/form-data" action="" method="post">
             {% csrf_token %}
-            {{ form }}
-            <input type="submit" value="submit">
+            <table border="1">
+                {{ form }}
+            </table>
+            <button type="submit" class="btn btn-primary">Submit</button>
         </form>
     </body>
 </html>
