@@ -1,22 +1,23 @@
-from jinja2 import Environment, FileSystemLoader
-from django.http import HttpResponse
-from django import forms
-from django.shortcuts import render
-from django.utils.dateparse import parse_datetime
-from django.urls import get_resolver
-
 import os
-import time
+import statistics
 import sys
+import time
 from datetime import datetime
 
-from pyecharts.charts import Tab, Bar, Line, Page
+from django import forms
+from django.http import HttpResponse, request
+from django.shortcuts import render, HttpResponseRedirect
+from django.urls import get_resolver, reverse
+from django.utils.dateparse import parse_datetime
+from jinja2 import Environment, FileSystemLoader
 from pyecharts import options as opts
-
-from .models import DataFile, DataFileRecord
-from .common.util.file import parse_file_size_str_to_int, parse_file_size_int_to_str
-
+from pyecharts.charts import Bar, Line, Page, Tab
 from pyecharts.globals import CurrentConfig
+
+from .common.util.file import (parse_file_size_int_to_str,
+                               parse_file_size_str_to_int)
+from .models import DataFile, DataFileRecord, StatFileRecord
+
 CurrentConfig.GLOBAL_ENV = Environment(
     loader=FileSystemLoader("stats/templates/stats/"))
 CurrentConfig.ONLINE_HOST = '/static/stats/'
@@ -181,60 +182,132 @@ def add_data_file_record(request):
         form = UploadDataFileForm()
     return render(request, 'stats/upload.html', {'form': form, 'title': 'Add data file record'})
 
-def handle_uploaded_fps_file(f, version, phase_name, sub_phase_name):
-    lines = []
 
-    with open('./file/name.txt', 'wb+') as destination:
-        for chunk in f.chunks():
-            destination.write(chunk)
-            for line in chunk.splitlines():
-                lines.append(line.decode('utf-8'))
+def phase_record(request):
+    phase_name = request.GET.get('phase_name', '')
+    sub_phase_name = request.GET.get('sub_phase_name', '')
+    date_time_str = request.GET.get('date_time_str', '')
 
-    print(version, phase_name, sub_phase_name)
+    if not phase_name or not sub_phase_name or not date_time_str:
+        return HttpResponse('Invalid paramaters')
 
+    statFileRecord = StatFileRecord.objects.filter(phase_name=phase_name, sub_phase_name=sub_phase_name, date_time__date=parse_datetime(date_time_str).date()).first()
+    if statFileRecord:
+        lines = []
+        
+        lines = statFileRecord.file.open(mode="r").read().splitlines()
+        statFileRecord.file.close()
+
+        frames = []
+        cpu_times = []
+        gpu_times = []
+        drawcall_cnts = []
+
+        # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
+        for line in lines[1:]:
+            attrs = line.split(',')
+            frames.append(round(1000 / float(attrs[0]), 2))
+            cpu_times.append(round(float(attrs[1]), 2))
+            gpu_times.append(round(float(attrs[2]), 2))
+            drawcall_cnts.append(round(float(attrs[3]), 2))
+
+        if not statFileRecord.avg_fps:
+            statFileRecord.avg_fps = round(statistics.mean(frames), 2)
+            statFileRecord.avg_cpu = round(statistics.mean(cpu_times), 2)
+            statFileRecord.avg_gpu = round(statistics.mean(gpu_times), 2)
+            statFileRecord.avg_drawcall = round(statistics.mean(drawcall_cnts), 2)
+            statFileRecord.save()
+
+        page = Page()
+        opt_avg = opts.MarkPointOpts(data=[opts.MarkPointItem(type_="average")])
+
+        perf_line = (
+            Line(init_opts=opts.InitOpts(width="1800px", height="900px"))
+            .add_xaxis(list(range(1, len(frames))))
+            .add_yaxis("frames", frames, markpoint_opts=opt_avg)
+            .add_yaxis("cpu_times", cpu_times, markpoint_opts=opt_avg)
+            .add_yaxis("gpu_times", gpu_times, markpoint_opts=opt_avg)
+            .add_yaxis("drawcall_cnts", drawcall_cnts, markpoint_opts=opt_avg)
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title=f'{phase_name}:{sub_phase_name}'),
+                yaxis_opts=opts.AxisOpts(max_=100),
+                datazoom_opts=[opts.DataZoomOpts(range_start=1, range_end=sys.maxsize)]
+            )
+        )
+        page.add(perf_line)
+
+        return HttpResponse(page.render_embed())
+    else:
+        return HttpResponse("no recored")
+
+
+def phase_stat(request):
+    phase_name = request.GET.get('phase_name', '')
+    sub_phase_name = request.GET.get('sub_phase_name', '')
+
+    if not phase_name or not sub_phase_name:
+        return HttpResponse('Invalid paramaters')
+
+    dates = []
     frames = []
     cpu_times = []
     gpu_times = []
     drawcall_cnts = []
 
-    # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
-    for line in lines[1:]:
-        attrs = line.split(',')
-        frames.append(round(1000 / float(attrs[0]), 2))
-        cpu_times.append(round(float(attrs[1]), 2))
-        gpu_times.append(round(float(attrs[2]), 2))
-        drawcall_cnts.append(round(float(attrs[3]), 2))
+    statFileRecords = StatFileRecord.objects.filter(phase_name=phase_name, sub_phase_name=sub_phase_name).order_by('date_time')
+    for statFileRecord in statFileRecords:
+        dates.append(statFileRecord.date_time.date())
+        frames.append(statFileRecord.avg_fps)
+        cpu_times.append(statFileRecord.avg_cpu)
+        gpu_times.append(statFileRecord.avg_gpu)
+        drawcall_cnts.append(statFileRecord.avg_drawcall)
 
-    page = Page()
-    opt_avg = opts.MarkPointOpts(data=[opts.MarkPointItem(type_="average")])
+    if len(dates) > 0:
+        page = Page()
+        opt_avg = opts.MarkPointOpts(data=[opts.MarkPointItem(type_="average")])
 
-    perf_line = (
-        Line(init_opts=opts.InitOpts(width="1800px", height="900px"))
-        .add_xaxis(list(range(1, len(frames))))
-        .add_yaxis("frames", frames, markpoint_opts=opt_avg)
-        .add_yaxis("cpu_times", cpu_times, markpoint_opts=opt_avg)
-        .add_yaxis("gpu_times", gpu_times, markpoint_opts=opt_avg)
-        .add_yaxis("drawcall_cnts", drawcall_cnts, markpoint_opts=opt_avg)
-        .set_global_opts(
-            title_opts=opts.TitleOpts(title=f'{phase_name}:{sub_phase_name}'),
-            yaxis_opts=opts.AxisOpts(max_=100),
-            datazoom_opts=[opts.DataZoomOpts(range_start=1, range_end=sys.maxsize)]
+        perf_line = (
+            Line(init_opts=opts.InitOpts(width="1800px", height="900px"))
+            .add_xaxis(dates)
+            .add_yaxis("frames", frames, markpoint_opts=opt_avg)
+            .add_yaxis("cpu_times", cpu_times, markpoint_opts=opt_avg)
+            .add_yaxis("gpu_times", gpu_times, markpoint_opts=opt_avg)
+            .add_yaxis("drawcall_cnts", drawcall_cnts, markpoint_opts=opt_avg)
+            .set_global_opts(
+                title_opts=opts.TitleOpts(title=f'{phase_name}:{sub_phase_name}'),
+                yaxis_opts=opts.AxisOpts(max_=100),
+                datazoom_opts=[opts.DataZoomOpts(range_start=1, range_end=sys.maxsize)]
+            )
         )
-    )
-    page.add(perf_line)
-    return HttpResponse(page.render_embed())
+        page.add(perf_line)
+    
+        return HttpResponse(page.render_embed())
+    else:
+        return HttpResponse("no recored")
 
-class UploadFpsFileForm(forms.Form):
+
+def handle_uploaded_stats_file(file, version, phase_name, sub_phase_name, date_time_str):
+    StatFileRecord.objects.create(phase_name=phase_name, sub_phase_name=sub_phase_name, version=version, file=file, date_time=parse_datetime(date_time_str))
+
+
+class UploadStatsFileForm(forms.Form):
     version = forms.CharField(max_length=50)
     phase_name = forms.CharField(max_length=50)
     sub_phase_name = forms.CharField(max_length=50)
+    date_time_str = forms.CharField(max_length=50)
     file = forms.FileField()
 
-def add_fps_file_record(request):
+
+def add_stats_file_record(request):
     if request.method == 'POST':
-        form = UploadFpsFileForm(request.POST, request.FILES)
+        form = UploadStatsFileForm(request.POST, request.FILES)
         if form.is_valid():
-            return handle_uploaded_fps_file(request.FILES['file'], request.POST['version'], request.POST['phase_name'], request.POST['sub_phase_name'])
+            phase_name = request.POST.get('phase_name', '')
+            sub_phase_name = request.POST.get('sub_phase_name', '')
+            date_time_str = request.POST.get('date_time_str', '')
+            handle_uploaded_stats_file(request.FILES['file'], request.POST['version'], phase_name, sub_phase_name, date_time_str)
+            return HttpResponseRedirect(reverse('phase_record') + f'?phase_name={phase_name}&sub_phase_name={sub_phase_name}&date_time_str={date_time_str}')
     else:
-        form = UploadFpsFileForm()
+        form = UploadStatsFileForm()
     return render(request, 'stats/upload.html', {'form': form, 'title': 'Add fps record'})
+

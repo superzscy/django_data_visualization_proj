@@ -22,12 +22,20 @@ class DataFileRecord(models.Model):
     def __str__(self):
         return str(self.data_file) + " " + str(parse_file_size_int_to_str(self.size)) + " " + str(self.date_time)
 
-class PerfRecord(models.Model):
+class StatFileRecord(models.Model):
     phase_name = models.CharField(max_length=3)
     sub_phase_name = models.CharField(max_length=32)
-    build_version = models.CharField(max_length=16)
-    perf_file_name = models.CharField(max_length=32)
-    desc = models.TextField(default='')
+    version = models.CharField(max_length=16)
+    file = models.FileField(upload_to='StatFileRecords/%Y/%m/%d/')
+    desc = models.TextField(default='', blank=True)
+    date_time = models.DateTimeField()
+    avg_fps = models.FloatField(null=True, blank=True, default=None)
+    avg_cpu = models.FloatField(null=True, blank=True, default=None)
+    avg_gpu = models.FloatField(null=True, blank=True, default=None)
+    avg_drawcall = models.FloatField(null=True, blank=True, default=None)
+
+    def __str__(self):
+        return f'{self.phase_name}:{self.sub_phase_name} {str(self.date_time.date())}'
 
 class ScenePerf(models.Model):
     phase_name = models.CharField(max_length=3)
