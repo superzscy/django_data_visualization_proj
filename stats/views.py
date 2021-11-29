@@ -266,10 +266,10 @@ def phase_stat(request):
         phase_name=phase_name, sub_phase_name=sub_phase_name).order_by('date_time')
     for statFileRecord in statFileRecords:
         dates.append(statFileRecord.date_time.date())
-        frames.append(statFileRecord.avg_fps)
-        cpu_times.append(statFileRecord.avg_cpu)
-        gpu_times.append(statFileRecord.avg_gpu)
-        drawcall_cnts.append(statFileRecord.avg_drawcall)
+        frames.append(round(statFileRecord.avg_fps, 2))
+        cpu_times.append(round(statFileRecord.avg_cpu, 2))
+        gpu_times.append(round(statFileRecord.avg_gpu, 2))
+        drawcall_cnts.append(round(statFileRecord.avg_drawcall, 2))
 
     if len(dates) > 0:
         page = Page()
@@ -312,12 +312,12 @@ def create_uploaded_stats_file(file, version, phase_name, sub_phase_name, date_t
     # Frame_Time(ms),CPU_Time(ms),GPU_Time(ms),Draw_Call(100),ESP2D(ms),SORT3D(ms),EVENTS
     for line in lines[2:]:
         attrs = line.split(',')
-        frames.append(1000 / float(attrs[0]))
+        frames.append(float(attrs[0]))
         cpu_times.append(float(attrs[1]))
         gpu_times.append(float(attrs[2]))
         drawcall_cnts.append(float(attrs[3]))
 
-    statFileRecord.avg_fps = statistics.mean(frames)
+    statFileRecord.avg_fps = 1000 / statistics.mean(frames)
     statFileRecord.avg_cpu = statistics.mean(cpu_times)
     statFileRecord.avg_gpu = statistics.mean(gpu_times)
     statFileRecord.avg_drawcall = statistics.mean(drawcall_cnts)
@@ -358,7 +358,10 @@ def add_stats_file_record(request):
 def get_phase_avg_fps(date, phase_name, sub_phase_name):
     avg_fps = StatFileRecord.objects.filter(
         phase_name=phase_name, sub_phase_name=sub_phase_name, date_time__date=date).values('avg_fps').aggregate(Avg('avg_fps'))
-    return list(avg_fps.values())[0]
+    if len(avg_fps.values()) > 0:
+        return list(avg_fps.values())[0]
+    else:
+        return 0
 
 
 def phase_fps_heatmap(request):
@@ -371,7 +374,7 @@ def phase_fps_heatmap(request):
         return HttpResponse('No records for fps')
     # return HttpResponse(f'phase num:{len(phases)} date_time num:{len(dates)}\n' + '\n'.join( [f'{t[0]} {t[1]}' for t in list(phases)]), content_type="text/plain")
     # print(f'phase num:{len(phases)} date_time num:{len(dates)}')
-    # print('P300', '250_CD_Unknown_9S', get_phase_avg_fps(parse_datetime('2021-11-26 0:0:0'), 'P300', '250_CD_Unknown_9S'))
+    # print('P100', '140_30_A_RobotM_CR_GuruBattle', get_phase_avg_fps(parse_datetime('2021-11-26 0:0:0'), 'P100', '140_30_A_RobotM_CR_GuruBattle'))
 
     latest_date = dates[-1]
     latest_fps_list = []
