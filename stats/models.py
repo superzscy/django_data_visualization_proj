@@ -23,7 +23,7 @@ class DataFileRecord(models.Model):
         return str(self.data_file) + " " + str(parse_file_size_int_to_str(self.size)) + " " + str(self.date_time)
 
 class StatFileRecord(models.Model):
-    phase_name = models.CharField(max_length=3)
+    phase_name = models.CharField(max_length=4)
     sub_phase_name = models.CharField(max_length=32)
     version = models.CharField(max_length=16)
     file = models.FileField(upload_to='StatFileRecords/%Y/%m/%d/')
